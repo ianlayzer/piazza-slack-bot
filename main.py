@@ -1,4 +1,5 @@
 from piazza_api import Piazza
+from bs4 import BeautifulSoup
 import os
 
 def get_link(question_num):
@@ -9,8 +10,9 @@ def get_content(question_num):
     p.user_login(email=os.environ.get('PIAZZA_EMAIL'), password=os.environ.get('PIAZZA_PASSWORD'))
     cs33 = p.network("keslbz8fxy144e")
     post = cs33.get_post(question_num)
-    content = post['history'][0]['content']
-    return content
+    html_content = post['history'][0]['content']
+    soup = BeautifulSoup(html_content, features="html.parser")
+    return soup.get_text()
 
 def handle_input(input):
     tokens = input.split()
@@ -23,3 +25,5 @@ def handle_input(input):
     
 def piazza_bot(request):
     return handle_input(request.form['text'])
+
+print(handle_input('get 343'))
