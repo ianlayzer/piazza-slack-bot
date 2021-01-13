@@ -1,7 +1,6 @@
 from piazza_api import Piazza
 from markdownify import markdownify
 import os
-import json
 
 DIVIDER_BLOCK = {
     'type': 'divider'
@@ -48,26 +47,9 @@ class PiazzaBot:
                     'text': str(self.question_num) + ': ' + most_recent_parent_post['subject']
                 }
             },
-            DIVIDER_BLOCK,
-            {
-                'type': 'section',
-                'text': {
-                    'type': 'mrkdwn',
-                    'text': 'Posted by ' + asker['name'] + ' at ' + most_recent_parent_post['created']
-                }
-            },
-            DIVIDER_BLOCK,
-            {
-                'type': 'section',
-                'text': {
-                    'type': 'mrkdwn',
-                    'text': markdownify(most_recent_parent_post['content'])
-                }
-            },
             DIVIDER_BLOCK
         ]
-        for child in post['children']:
-            blocks += self.create_answer_blocks(child)
+        blocks += self.create_answer_blocks(post)
 
         message = {
             'blocks': blocks
@@ -76,10 +58,14 @@ class PiazzaBot:
 
     def create_answer_blocks(self, response):
         response_type = ''
-        if response['type'] == 'i_answer':
+        if response['type'] == 'question':
+            response_type = '*Question*'
+        elif response['type'] == 'note':
+            response_type = '*Note*'
+        elif response['type'] == 'i_answer':
             response_type = '*Instructor Answer*'
         elif response['type'] == 's_answer':
-            response_type = 'Student Answer*'
+            response_type = '*Student Answer*'
         elif response['type'] == 'followup':
             response_type = '*Followup*'
         elif response['type'] == 'feedback':
@@ -96,14 +82,14 @@ class PiazzaBot:
                     'text': response_type
                 }
             },
-            DIVIDER_BLOCK,
             {
                 'type': 'section',
                 'text': {
                     'type': 'mrkdwn',
-                    'text': 'Posted by ' + self.user_map[response_metadata['uid']]['name'] + ' at ' + response_metadata['created']
+                    'text': 'Posted by ' + self.user_map[response_metadata['uid']]['name'] + ' at ' + response_metadata['created'][:19].replace('T', ' ')
                 }
             },
+            DIVIDER_BLOCK,
             {
                 'type': 'section',
                 'text': {
@@ -139,6 +125,3 @@ class PiazzaBot:
 def piazza_bot(request):
     bot = PiazzaBot()
     return bot.handle_input(request.form['text'])
-
-bot = PiazzaBot()
-print(json.dumps(bot.handle_input('get 4416'), indent=2))
