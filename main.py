@@ -7,106 +7,138 @@ DIVIDER_BLOCK = {
     'type': 'divider'
 }
 
-def create_answer_blocks(response):
-    response_type = ''
-    if response['type'] == 'i_answer':
-        response_type = '*Instructor Answer*'
-    elif response['type'] == 's_answer':
-        response_type = 'Student Answer*'
-    elif response['type'] == 'followup':
-        response_type = '*Followup*'
-    elif response['type'] == 'feedback':
-        response_type = '*Feedback*'
+class PiazzaBot:
+    def __init__(self):
+        self.piazza = Piazza()
+        self.piazza.user_login(email=os.environ.get('PIAZZA_EMAIL'), password=os.environ.get('PIAZZA_PASSWORD'))
+        self.course = self.piazza.network(os.environ.get('PIAZZA_CLASS_ID'))
+        self.question_num = None
+        self.post = None
+        self.user_map = {}
 
-    text_to_display = ''
-    if 'history' in response:
-        text_to_display = response['history'][0]['content']
-    else:
-        text_to_display = response['subject']
+    def handle_input(self, input):
+        tokens = input.split()
+        if len(tokens) != 2:
+            return "Incorrect number of arguments."
+        self.question_num = int(tokens[1])
+        if tokens[0] == "link":
+            return self.make_link()
+        elif tokens[0] == "get":
+            return self.get_content()
+        else:
+            return "Unknown command."
 
-    blocks = [
-        {
-            'type': 'section',
-            'text': {
-                'type': 'mrkdwn',
-                'text': response_type
-            }
-        },
-        DIVIDER_BLOCK,
-        {
-            'type': 'section',
-            'text': {
-                'type': 'mrkdwn',
-                'text': markdownify(text_to_display)
-            }
-        },
-        DIVIDER_BLOCK
-    ]
-    if 'children' in response:
-        for child in response['children']:
-            blocks += create_answer_blocks(child)
-    return blocks
+    def make_link(self):
+        return 'https://piazza.com/class/' + os.environ.get('PIAZZA_CLASS_ID') + '?cid=' + str(self.question_num)
 
-def create_slack_message(piazza_post, question_num):
-    most_recent_parent_post = piazza_post['history'][0]
+    def get_content(self):
+        self.post = self.course.get_post(self.question_num)
+        self.user_map = self.get_users(self.post)
+        return self.create_slack_message(self.post)
 
-    blocks = [
-        {
-            'type': 'header',
-            'text': {
-                'type': 'plain_text',
-                'text': str(question_num) + ': ' + most_recent_parent_post['subject']
-            }
-        },
-        DIVIDER_BLOCK,
-        {
-            'type': 'section',
-            'text': {
-                'type': 'plain_text',
-                'text': 'Posted ' + most_recent_parent_post['created']
-            }
-        },
-        DIVIDER_BLOCK,
-        {
-            'type': 'section',
-            'text': {
-                'type': 'mrkdwn',
-                'text': markdownify(most_recent_parent_post['content'])
-            }
-        },
-        DIVIDER_BLOCK
-    ]
-    for child in piazza_post['children']:
-        blocks += create_answer_blocks(child)
+    def create_slack_message(self, post):
+        most_recent_parent_post = post['history'][0]
+        asker = self.user_map[most_recent_parent_post['uid']]
 
-    message = {
-        'response_type': 'in_channel',
-        'blocks': blocks
-    }
-    return message
+        blocks = [
+            {
+                'type': 'header',
+                'text': {
+                    'type': 'plain_text',
+                    'text': str(self.question_num) + ': ' + most_recent_parent_post['subject']
+                }
+            },
+            DIVIDER_BLOCK,
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': 'Posted by ' + asker['name'] + ' at ' + most_recent_parent_post['created']
+                }
+            },
+            DIVIDER_BLOCK,
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': markdownify(most_recent_parent_post['content'])
+                }
+            },
+            DIVIDER_BLOCK
+        ]
+        for child in post['children']:
+            blocks += self.create_answer_blocks(child)
+
+        message = {
+            'blocks': blocks
+        }
+        return message
+
+    def create_answer_blocks(self, response):
+        response_type = ''
+        if response['type'] == 'i_answer':
+            response_type = '*Instructor Answer*'
+        elif response['type'] == 's_answer':
+            response_type = 'Student Answer*'
+        elif response['type'] == 'followup':
+            response_type = '*Followup*'
+        elif response['type'] == 'feedback':
+            response_type = '*Feedback*'
 
 
-def get_link(question_num):
-    return os.environ.get('PIAZZA_BASE_URL') + str(question_num)
+        response_metadata = response['history'][0] if 'history' in response else response
+        html_content = response_metadata['content'] if 'content' in response_metadata else response_metadata['subject']
+        blocks = [
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': response_type
+                }
+            },
+            DIVIDER_BLOCK,
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': 'Posted by ' + self.user_map[response_metadata['uid']]['name'] + ' at ' + response_metadata['created']
+                }
+            },
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': markdownify(html_content)
+                }
+            },
+            DIVIDER_BLOCK
+        ]
+        if 'children' in response:
+            for child in response['children']:
+                blocks += self.create_answer_blocks(child)
+        return blocks
+    
+    def get_users(self, post):
+        user_id_set = self.get_user_id_set(post, set())
+        users = self.course.get_users(list(user_id_set))
+        user_map = {}
+        for user in users:
+            user_map[user['id']] = user
+        return user_map
 
-def get_content(question_num):
-    p = Piazza()
-    p.user_login(email=os.environ.get('PIAZZA_EMAIL'), password=os.environ.get('PIAZZA_PASSWORD'))
-    cs33 = p.network("keslbz8fxy144e")
-    post = cs33.get_post(question_num)
-    return create_slack_message(post, question_num)
+    def get_user_id_set(self, post, user_id_set):
+        if 'uid' in post:
+            user_id_set.add(post['uid'])
+        elif 'history' in post:
+            user_id_set.add(post['history'][0]['uid'])
+        if 'children' in post:
+            for child in post['children']:
+                self.get_user_id_set(child, user_id_set)
+        return user_id_set
 
-def handle_input(input):
-    tokens = input.split()
-    if len(tokens) != 2:
-        return "Incorrect number of arguments."
-    elif tokens[0] == "link":
-        return get_link(int(tokens[1]))
-    elif tokens[0] == "get":
-        return get_content(int(tokens[1]))
-    else:
-        return "Unknown command."
 def piazza_bot(request):
-    return handle_input(request.form['text'])
+    bot = PiazzaBot()
+    return bot.handle_input(request.form['text'])
 
-print(json.dumps(handle_input('get 4416'), indent=2))
+bot = PiazzaBot()
+print(json.dumps(bot.handle_input('get 4416'), indent=2))
